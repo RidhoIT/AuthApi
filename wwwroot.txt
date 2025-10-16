@@ -1,0 +1,1139 @@
+wwwroot : 
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\wwwroot\checkin.html
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Worker Daily Check-In List</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h2 {
+            color: #0078d7;
+            margin-bottom: 5px;
+        }
+
+        #user-info {
+            font-size: 14px;
+            color: #555;
+            margin-bottom: 10px;
+        }
+
+        .top-bar {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        button {
+            padding: 10px 18px;
+            background-color: #0078d7;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: 0.2s;
+            margin: 3px;
+        }
+
+            button:hover {
+                background-color: #005fa3;
+            }
+
+        #logoutBtn {
+            background-color: #dc3545;
+        }
+
+            #logoutBtn:hover {
+                background-color: #b02a37;
+            }
+
+        .checkin-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .checkin-card {
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+            transition: transform 0.2s, background-color 0.2s;
+        }
+
+            .checkin-card:hover {
+                transform: translateY(-2px);
+                background-color: #eef5ff;
+            }
+
+        .checkin-info {
+            margin: 6px 0;
+            color: #444;
+            font-size: 14px;
+        }
+
+            .checkin-info strong {
+                color: #0078d7;
+                width: 120px;
+                display: inline-block;
+            }
+
+        .loading, .error, .empty {
+            text-align: center;
+            margin-top: 25px;
+            color: #777;
+        }
+
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h2>Worker Daily Check-In List</h2>
+        <p id="user-info">Checking session...</p>
+        <div class="top-bar">
+            <button id="createBtn">+ Add Check-In</button>
+            <button id="homeBtn">🏠 Home</button>
+            <button id="logoutBtn">Logout</button>
+        </div>
+    </header>
+
+    <div id="checkinContainer" class="checkin-container">
+        <p class="loading">Loading data...</p>
+    </div>
+
+    <script>
+        // 🔹 Periksa session login
+        async function checkSession() {
+            try {
+                const res = await fetch("/api/auth/session");
+                if (!res.ok) {
+                    window.location.href = "login.html";
+                    return null;
+                }
+                const data = await res.json();
+                document.getElementById("user-info").innerText = `Hi, ${data.username}! You are logged in.`;
+                return data;
+            } catch (err) {
+                console.error("Error checking session:", err);
+                window.location.href = "login.html";
+                return null;
+            }
+        }
+
+        // 🔹 Ambil data Check-In
+        async function loadCheckInData() {
+            const container = document.getElementById("checkinContainer");
+            container.innerHTML = "<p class='loading'>Loading data...</p>";
+
+            try {
+                const res = await fetch("/api/DailyCheckInApi");
+                if (!res.ok) throw new Error("Gagal mengambil data check-in");
+
+                const json = await res.json();
+                const data = json.data;
+                container.innerHTML = "";
+
+                if (!data || data.length === 0) {
+                    container.innerHTML = "<p class='empty'>Tidak ada data check-in.</p>";
+                    return;
+                }
+
+                data.forEach((item, index) => {
+                    const card = document.createElement("div");
+                    card.className = "checkin-card";
+                    card.innerHTML = `
+                            <h3>Check-In #${index + 1}</h3>
+                            <div class="checkin-info"><strong>Date:</strong> ${new Date(item.createDate).toLocaleString()}</div>
+                            <div class="checkin-info"><strong>Location:</strong> ${item.location || "-"}</div>
+                            <div class="checkin-info"><strong>Trial Code:</strong> ${item.trial_Code || "-"}</div>
+                            <div class="checkin-info"><strong>Status:</strong> ${item.status || "-"}</div>
+                            <button class="view-btn">View Details</button>
+                            <button class="delete-btn" style="background-color:red;">Delete</button>
+                        `;
+
+                    // Lihat detail
+                    card.querySelector(".view-btn").onclick = () => {
+                        window.location.href = `checkin_details.html?id=${item.id}`;
+                    };
+
+                    // Hapus check-in
+                    card.querySelector(".delete-btn").onclick = async (e) => {
+                        e.stopPropagation();
+                        if (!confirm("Yakin ingin menghapus check-in ini beserta semua details?")) return;
+
+                        try {
+                            const delRes = await fetch(`/api/DailyCheckInApi/${item.id}`, {
+                                method: "DELETE"
+                            });
+                            const delJson = await delRes.json();
+                            if (!delRes.ok) throw new Error(delJson.message || "Gagal menghapus data");
+                            alert(delJson.message);
+                            loadCheckInData();
+                        } catch (err) {
+                            console.error(err);
+                            alert("Gagal menghapus data check-in");
+                        }
+                    };
+
+                    container.appendChild(card);
+                });
+            } catch (err) {
+                console.error("Error load data:", err);
+                container.innerHTML = "<p class='error'>Gagal memuat data check-in.</p>";
+            }
+        }
+
+        // 🔹 Tombol Navigasi
+        document.getElementById("createBtn").addEventListener("click", () => {
+            window.location.href = "create_checkin.html";
+        });
+
+        document.getElementById("homeBtn").addEventListener("click", () => {
+            window.location.href = "home.html";
+        });
+
+        document.getElementById("logoutBtn").addEventListener("click", async () => {
+            if (!confirm("Yakin ingin logout?")) return;
+            try {
+                const res = await fetch("/api/auth/logout", { method: "POST" });
+                if (res.ok) {
+                    alert("Logout berhasil!");
+                    window.location.href = "login.html";
+                }
+            } catch {
+                alert("Terjadi kesalahan saat logout");
+            }
+        });
+
+        // 🔹 Jalankan saat halaman dimuat
+        (async () => {
+            const user = await checkSession();
+            if (user) loadCheckInData();
+        })();
+    </script>
+</body>
+</html>
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\wwwroot\checkin_details.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Check-In Details</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 30px;
+        }
+
+        h2 {
+            text-align: center;
+            color: #0078d7;
+        }
+
+        .top-bar {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+            .top-bar button {
+                display: inline-block;
+                margin: 0 5px;
+            }
+
+
+        button {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            color: white;
+            background-color: #0078d7;
+            margin: 5px;
+            transition: 0.2s;
+        }
+
+            button:hover {
+                background-color: #005fa3;
+            }
+
+        .header-info {
+            max-width: 600px;
+            margin: 20px auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        }
+
+        .info-item {
+            margin: 8px 0;
+            color: #333;
+        }
+
+        .details-container {
+            max-width: 800px;
+            margin: 25px auto;
+            background: #fff;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+
+        th {
+            background-color: #0078d7;
+            color: white;
+        }
+
+        .empty, .loading, .error {
+            text-align: center;
+            color: #777;
+            margin: 15px 0;
+        }
+
+        .error {
+            color: red;
+        }
+
+        .action-btn {
+            padding: 5px 10px;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: red;
+        }
+
+        #markCompletedBtn {
+            background-color: green;
+        }
+
+            #markCompletedBtn:hover {
+                background-color: darkgreen;
+            }
+    </style>
+</head>
+<body>
+    <h2>Check-In Details</h2>
+
+    <div class="top-bar">
+        <button onclick="window.location.href='checkin.html'">? Back</button>
+        <button id="markCompletedBtn">?</button>
+        <button id="createDetailBtn">+ </button>
+    </div>
+
+
+    <div id="headerInfo" class="header-info">
+        <p class="loading">Loading check-in data...</p>
+    </div>
+
+
+
+    <div id="detailsContainer" class="details-container"></div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const checkinId = urlParams.get("id");
+
+        // Tombol Create Detail
+        document.getElementById("createDetailBtn").onclick = () => {
+            window.location.href = `create_checkin_details.html?id=${checkinId}`;
+        };
+
+        // Load header & detail check-in
+        async function loadCheckInDetail() {
+            const headerDiv = document.getElementById("headerInfo");
+            const detailsDiv = document.getElementById("detailsContainer");
+
+            headerDiv.innerHTML = "<p class='loading'>Loading check-in data...</p>";
+            detailsDiv.innerHTML = "<p class='loading'>Loading details...</p>";
+
+            try {
+                const res = await fetch(`/api/DailyCheckInApi/${checkinId}`);
+                if (!res.ok) throw new Error("Gagal mengambil data check-in");
+
+                const json = await res.json();
+                const data = json.data;
+
+                if (!data) {
+                    headerDiv.innerHTML = "<p class='error'>Data tidak ditemukan.</p>";
+                    detailsDiv.innerHTML = "";
+                    return;
+                }
+
+                // Header info
+                headerDiv.innerHTML = `
+                            <div class="info-item"><strong>Location:</strong> ${data.location || "-"}</div>
+                            <div class="info-item"><strong>Trial Code:</strong> ${data.trial_Code || "-"}</div>
+                            <div class="info-item"><strong>Status:</strong> ${data.status || "-"}</div>
+                            <div class="info-item"><strong>Date:</strong> ${new Date(data.createDate).toLocaleString()}</div>
+                        `;
+
+                const details = data.details || [];
+                if (details.length === 0) {
+                    detailsDiv.innerHTML = "<p class='empty'>Tidak ada data pekerja.</p>";
+                    return;
+                }
+
+                let tableHTML = `
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>ID Pekerja</th>
+                                        <th>Nama</th>
+                                        <th>Work Code</th>
+                                        <th>Work Name</th>
+                                        <th>UOM</th>
+                                        <th>Hasil Kerja</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                        `;
+
+                details.forEach(d => {
+                            tableHTML += `
+                        <tr>
+                            <td>${d.id_Fingerprint || "-"}</td>
+                            <td>${d.worker_Name || "-"}</td>
+                            <td>${d.work_Code || "-"}</td>
+                            <td>${d.work_Name || "-"}</td>
+                            <td>${d.uom || "-"}</td>
+                            <td>${d.work_Result || "-"}</td>
+                            <td>
+                                <button class="action-btn" onclick="deleteDetail(${d.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                                });
+
+                tableHTML += "</tbody></table>";
+                detailsDiv.innerHTML = tableHTML;
+
+            } catch (err) {
+                console.error(err);
+                headerDiv.innerHTML = "<p class='error'>Gagal memuat data check-in.</p>";
+                detailsDiv.innerHTML = "<p class='error'>Gagal memuat detail pekerja.</p>";
+            }
+        }
+
+        // Delete detail pekerja
+        async function deleteDetail(detailId) {
+            if (!detailId) {
+                alert("ID detail tidak ditemukan!");
+                return;
+            }
+            if (!confirm("Yakin ingin menghapus data detail ini?")) return;
+
+            try {
+                const res = await fetch(`/api/DailyCheckInApi/detail/${detailId}`, { method: "DELETE" });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.message || "Gagal menghapus detail");
+                alert(json.message);
+                loadCheckInDetail();
+            } catch (err) {
+                console.error(err);
+                alert("Gagal menghapus detail");
+            }
+        }
+
+        // Tombol Tanda Ceklis
+        document.getElementById("markCompletedBtn").onclick = async () => {
+            if (!confirm("Yakin ingin menandai check-in ini sebagai Completed?")) return;
+
+            try {
+                const res = await fetch(`/api/DailyCheckInApi/complete/${checkinId}`, {
+                    method: "PATCH"
+                });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.message || "Gagal mengubah status");
+                alert(json.message);
+                loadCheckInDetail(); // refresh data
+            } catch (err) {
+                console.error(err);
+                alert("Gagal mengubah status check-in.");
+            }
+        };
+
+        // Load data awal
+        loadCheckInDetail();
+    </script>
+</body>
+</html>
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\wwwroot\create_checkin.html
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Create Worker Daily CheckIn</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 40px;
+        }
+
+        h2 {
+            text-align: center;
+            color: #0078d7;
+            margin-bottom: 25px;
+        }
+
+        form {
+            max-width: 500px;
+            background-color: #fff;
+            margin: 0 auto;
+            padding: 25px 35px;
+            border-radius: 10px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        }
+
+        label {
+            display: block;
+            margin-top: 12px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        select, input {
+            width: 100%;
+            padding: 10px;
+            margin-top: 5px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        button {
+            margin-top: 18px;
+            padding: 10px 16px;
+            background-color: #0078d7;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 15px;
+            transition: 0.2s;
+        }
+
+            button:hover {
+                background-color: #005fa3;
+            }
+
+            button[type="button"] {
+                background-color: #777;
+                margin-left: 8px;
+            }
+
+                button[type="button"]:hover {
+                    background-color: #555;
+                }
+
+        #result {
+            text-align: center;
+            margin-top: 15px;
+            color: green;
+            font-weight: bold;
+        }
+
+        .user-info {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #444;
+        }
+    </style>
+</head>
+<body>
+    <h2>Create Worker Daily CheckIn</h2>
+
+    <div class="user-info" id="userInfo"></div>
+
+    <form id="checkinForm">
+        <label>Location:</label>
+        <select id="Location"></select>
+
+        <label>Trial Code:</label>
+        <select id="Trial_Code"></select>
+
+        <label>Device Name:</label>
+        <input type="text" id="Device_Name" placeholder="Masukkan nama perangkat">
+
+        <label>Longitude:</label>
+        <input type="text" id="Longitude" placeholder="Contoh: 101.423500">
+
+        <label>Latitude:</label>
+        <input type="text" id="Latitude" placeholder="Contoh: 0.512300">
+
+        <div style="text-align:center;">
+            <button type="submit">Submit</button>
+            <button type="button" onclick="window.location.href='checkin.html'">Back</button>
+        </div>
+    </form>
+
+    <p id="result"></p>
+
+    <script>
+        // 🔒 Cek apakah user sudah login
+        const userSession = JSON.parse(localStorage.getItem("userSession"));
+        if (!userSession || !userSession.username) {
+            alert("Anda harus login terlebih dahulu!");
+            window.location.href = "login.html"; // arahkan ke halaman login
+        }
+
+        // Tampilkan info user login di atas form
+        document.getElementById("userInfo").innerText =
+            `Login sebagai: ${userSession.username} (${userSession.email || "no email"})`;
+
+        // ✅ Load data lokasi
+        async function loadLocations() {
+            try {
+                const res = await fetch("/api/LocationApi");
+                const locations = await res.json();
+                const select = document.getElementById("Location");
+                select.innerHTML = '<option value="">-- Pilih Lokasi --</option>';
+                locations.forEach(loc => {
+                    const option = document.createElement("option");
+                    option.value = loc.location_Name;
+                    option.textContent = loc.location_Name;
+                    select.appendChild(option);
+                });
+            } catch (err) {
+                console.error("Error load lokasi:", err);
+            }
+        }
+
+        // ✅ Load data trial aktif
+        async function loadActiveTrials() {
+            try {
+                const res = await fetch("/api/TrialApi/active");
+                const trials = await res.json();
+                const select = document.getElementById("Trial_Code");
+                select.innerHTML = '<option value="">-- Pilih Trial Code Aktif --</option>';
+                trials.forEach(trial => {
+                    const option = document.createElement("option");
+                    option.value = trial.trial_Code;
+                    option.textContent = trial.trial_Code;
+                    select.appendChild(option);
+                });
+            } catch (err) {
+                console.error("Error load trial aktif:", err);
+            }
+        }
+
+        // ✅ Submit form
+        document.getElementById("checkinForm").addEventListener("submit", async e => {
+            e.preventDefault();
+
+            const data = {
+                Location: document.getElementById("Location").value,
+                Trial_Code: document.getElementById("Trial_Code").value,
+                Status: "Not Completed",
+                Date: new Date().toISOString(),
+                Device_Name: document.getElementById("Device_Name").value,
+                Longitude: document.getElementById("Longitude").value,
+                Latitude: document.getElementById("Latitude").value,
+                CreateBy: userSession.username // gunakan session user
+            };
+
+            try {
+                const res = await fetch("/api/DailyCheckInApi/header", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await res.json();
+
+                if (!res.ok) throw new Error(result.message || "Gagal mengirim data");
+
+                document.getElementById("result").innerText = result.message || "Data berhasil dikirim.";
+                document.getElementById("result").style.color = "green";
+            } catch (err) {
+                document.getElementById("result").innerText = err.message || "Terjadi kesalahan saat mengirim data.";
+                document.getElementById("result").style.color = "red";
+            }
+        });
+
+        // Jalankan saat halaman dibuka
+        loadLocations();
+        loadActiveTrials();
+    </script>
+</body>
+</html>
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\wwwroot\create_checkin_details.html
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Add Check-In Detail</title>
+        <style>
+            body {
+                font-family: "Segoe UI", Arial, sans-serif;
+                background-color: #e5eaf0;
+                margin: 0;
+                padding: 40px;
+            }
+
+            h2 {
+                text-align: center;
+                color: #0078d7;
+                margin-bottom: 30px;
+                font-size: 28px;
+            }
+
+            .top-bar {
+                text-align: center;
+                margin-bottom: 25px;
+            }
+
+                .top-bar button {
+                    padding: 10px 20px;
+                    background-color: #6c757d;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    transition: 0.2s;
+                }
+
+                    .top-bar button:hover {
+                        background-color: #5a6268;
+                    }
+
+            .form-container {
+                max-width: 650px;
+                margin: 0 auto;
+                background: #fff;
+                padding: 40px 50px;
+                border-radius: 15px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            }
+
+            form {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px 25px;
+            }
+
+            label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: 600;
+                color: #333;
+            }
+
+            input {
+                width: 100%;
+                padding: 12px 14px;
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                font-size: 14px;
+                transition: all 0.3s ease;
+            }
+
+                input:focus {
+                    border-color: #0078d7;
+                    box-shadow: 0 0 8px rgba(0,120,215,0.2);
+                    outline: none;
+                }
+
+            .full-width {
+                grid-column: 1 / -1;
+            }
+
+            #detailForm button {
+                grid-column: 1 / -1;
+                background-color: #0078d7;
+                padding: 12px;
+                font-size: 16px;
+                font-weight: 600;
+            }
+
+                #detailForm button:hover {
+                    background-color: #005fa3;
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                }
+
+            #formMessage {
+                text-align: center;
+                margin-top: 20px;
+                font-weight: 500;
+                font-size: 15px;
+            }
+
+            /* Responsive */
+            @media (max-width: 600px) {
+                form {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <h2>Add Check-In Detail</h2>
+
+        <div class="top-bar">
+            <button onclick="window.location.href='checkin_details.html?id=' + checkinId">? Back</button>
+        </div>
+
+        <div class="form-container">
+            <form id="detailForm">
+                <div>
+                    <label for="id_Fingerprint">ID Pekerja</label>
+                    <input type="number" id="id_Fingerprint" placeholder="Masukkan ID Pekerja" required>
+                </div>
+
+                <div>
+                    <label for="work_Name">Nama Pekerja</label>
+                    <input type="text" id="work_Name" placeholder="Masukkan Nama Pekerja" required>
+                </div>
+
+                <div>
+                    <label for="work_Code">Work Code</label>
+                    <input type="text" id="work_Code" placeholder="Masukkan Work Code">
+                </div>
+
+                <div>
+                    <label for="uom">UOM</label>
+                    <input type="text" id="uom" placeholder="Masukkan UOM">
+                </div>
+
+                <div>
+                    <label for="work_Result">Hasil Kerja</label>
+                    <input type="text" id="work_Result" placeholder="Masukkan Hasil Kerja">
+                </div>
+
+                <button type="submit" class="full-width">Submit</button>
+            </form>
+            <p id="formMessage"></p>
+        </div>
+        <script>
+            const urlParams = new URLSearchParams(window.location.search);
+            const checkinId = urlParams.get("id");
+
+            const form = document.getElementById("detailForm");
+            const message = document.getElementById("formMessage");
+
+            form.addEventListener("submit", async (e) => {
+                e.preventDefault();
+
+                if (!checkinId) {
+                    message.style.color = "red";
+                    message.textContent = "ID Check-in tidak valid.";
+                    return;
+                }
+
+                const detailData = [{
+                    DailyCheckinId: parseInt(checkinId),
+                    Id_Fingerprint: parseInt(document.getElementById("id_Fingerprint").value),
+                    Worker_Name: document.getElementById("work_Name").value,
+                    Work_Code: document.getElementById("work_Code").value,
+                    Work_Name: document.getElementById("work_Name").value,
+                    UOM: document.getElementById("uom").value,
+                    Work_Result: document.getElementById("work_Result").value
+                }];
+
+                try {
+                    const res = await fetch("/api/DailyCheckInApi/detail", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(detailData)
+                    });
+
+                    const json = await res.json();
+
+                    if (!res.ok) throw new Error(json.message || "Gagal menambahkan data");
+
+                    message.style.color = "green";
+                    message.textContent = json.message;
+                    form.reset();
+
+                } catch (err) {
+                    message.style.color = "red";
+                    message.textContent = err.message;
+                }
+            });
+        </script>
+
+
+    </body>
+    </html>
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\wwwroot\home.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Home</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            background-color: #f4f6f8;
+            text-align: center;
+            padding-top: 100px;
+        }
+
+        h2 {
+            color: #0078d7;
+        }
+
+        #welcome {
+            font-size: 18px;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        button {
+            margin: 15px;
+            padding: 12px 24px;
+            background-color: #0078d7;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            transition: 0.2s;
+        }
+
+            button:hover {
+                background-color: #005fa3;
+            }
+
+        #msg {
+            margin-top: 20px;
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h2>Welcome to Worker Check-In System</h2>
+    <div id="welcome">Loading user info...</div>
+
+    <button onclick="window.location.href='checkin.html'">Daily Check-In</button>
+    <button onclick="logout()">Logout</button>
+
+    <p id="msg"></p>
+
+    <script>
+        // ✅ Cek session saat halaman dibuka
+        document.addEventListener("DOMContentLoaded", async () => {
+            try {
+                const res = await fetch("/api/auth/session");
+                if (!res.ok) {
+                    // Jika belum login, arahkan ke login.html
+                    window.location.href = "/login.html";
+                    return;
+                }
+
+                const data = await res.json();
+                document.getElementById("welcome").innerText =
+                    `Hello, ${data.username}! Selamat datang 👋`;
+            } catch (err) {
+                console.error("Error:", err);
+                document.getElementById("welcome").innerText = "Gagal memuat data user.";
+            }
+        });
+
+        // ✅ Fungsi logout
+        async function logout() {
+            try {
+                const res = await fetch("/api/auth/logout", { method: "POST" });
+                if (res.ok) {
+                    alert("Logout berhasil!");
+                    window.location.href = "/login.html";
+                } else {
+                    document.getElementById("msg").innerText = "Gagal logout, coba lagi.";
+                }
+            } catch (err) {
+                console.error("Logout error:", err);
+                document.getElementById("msg").innerText = "Terjadi kesalahan.";
+            }
+        }
+    </script>
+</body>
+</html>
+
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\wwwroot\index.html
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\wwwroot\login.html
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            background: linear-gradient(135deg, #0078d7, #00a2ff);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .login-container {
+            background-color: #fff;
+            padding: 40px 50px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            width: 340px;
+            text-align: center;
+        }
+
+        h2 {
+            color: #0078d7;
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            text-align: left;
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 6px;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 18px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #0078d7;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+
+            button:hover {
+                background-color: #005fa3;
+            }
+
+        #msg {
+            margin-top: 15px;
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h2>Login</h2>
+        <form id="loginForm">
+            <label>Username</label>
+            <input type="text" id="Username" required>
+
+            <label>Password</label>
+            <input type="password" id="Password" required>
+
+            <button type="submit">Login</button>
+        </form>
+        <p id="msg"></p>
+    </div>
+
+    <script>
+        document.getElementById("loginForm").addEventListener("submit", async function (e) {
+            e.preventDefault();
+            const msg = document.getElementById("msg");
+            msg.style.color = "red";
+            msg.textContent = "Memproses login...";
+
+            try {
+                const response = await fetch("/api/auth/login", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    credentials: "include", // penting untuk ASP.NET session
+                    body: JSON.stringify({
+                        username: document.getElementById("Username").value.trim(),
+                        password: document.getElementById("Password").value.trim()
+                    })
+                });
+
+                const text = await response.text(); // ambil response mentah
+                let result;
+
+                try {
+                    result = JSON.parse(text);
+                } catch {
+                    result = { message: text };
+                }
+
+                if (response.ok && result.success) {
+                    msg.style.color = "green";
+                    msg.textContent = "Login berhasil! Mengarahkan...";
+                    setTimeout(() => {
+                        window.location.href = "/home.html";
+                    }, 1000);
+                } else {
+                    msg.textContent = result.message || "Username atau password salah.";
+                }
+
+            } catch (error) {
+                msg.textContent = "Gagal terhubung ke server.";
+                console.error("Login error:", error);
+            }
+        });
+    </script>
+</body>
+</html>
