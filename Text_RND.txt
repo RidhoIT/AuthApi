@@ -1,0 +1,1484 @@
+1. Controller :
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\AuthController.cs
+
+
+using App_Administration_RND.Data;
+using App_Administration_RND.DTOs;
+using App_Administration_RND.Models;
+using App_Administration_RND.Services;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace App_Administration_RND.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AuthController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+        private readonly PasswordService _passwordService;
+
+        public AuthController(ApplicationDbContext context)
+        {
+            _context = context;
+            _passwordService = new PasswordService();
+        }
+
+        // ✅ REGISTER
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] AuthRequest register)
+        {
+            if (string.IsNullOrWhiteSpace(register.Username) || string.IsNullOrWhiteSpace(register.Password))
+                return BadRequest("Username dan Password wajib diisi.");
+
+            // Cek apakah username sudah digunakan
+            var existingUser = await _context.STGM_ADM_Users.FirstOrDefaultAsync(u => u.Username == register.Username);
+            if (existingUser != null)
+                return Conflict("Username sudah digunakan.");
+
+            // Hash password
+            string hashedPassword = _passwordService.HashPassword(register.Password);
+
+            // Buat user baru
+            var newUser = new ApplicationUser
+            {
+                Name = register.Username, // bisa disesuaikan, misal pakai input tambahan kalau ada
+                Username = register.Username,
+                PasswordHash = hashedPassword,
+                LevelId = 7,
+                AndroidAccess = 1,
+                AndroidIsLocked = 0,
+                ManId = "RAP",
+                Email = $"{register.Username}@example.com",
+                EtlStatus = null
+            };
+
+            _context.STGM_ADM_Users.Add(newUser);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                message = "Registrasi berhasil.",
+                username = newUser.Username
+            });
+        }
+
+        // ✅ LOGIN
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] AuthRequest login)
+        {
+            if (string.IsNullOrWhiteSpace(login.Username) || string.IsNullOrWhiteSpace(login.Password))
+                return BadRequest("Username dan Password wajib diisi.");
+
+            var user = await _context.STGM_ADM_Users.FirstOrDefaultAsync(u => u.Username == login.Username);
+            if (user == null)
+                return Unauthorized("Username tidak ditemukan.");
+
+            bool isValid = _passwordService.VerifyPassword(user.PasswordHash, login.Password);
+
+            if (!isValid)
+                return Unauthorized("Password salah.");
+
+            // Simpan session
+            HttpContext.Session.SetString("Username", user.Username);
+
+            var response = new AuthResponse
+            {
+                Success = true,
+                Message = "Login berhasil.",
+                Username = user.Username,
+                Name = user.Name,
+                LevelId = user.LevelId
+            };
+
+            return Ok(response);
+        }
+
+        // ✅ LOGOUT
+        [HttpPost("logout")]
+        public IActionResult Logout()
+        {
+            HttpContext.Session.Clear();
+            return Ok(new { message = "Logout berhasil." });
+        }
+
+        // ✅ CEK SESSION
+        [HttpGet("session")]
+        public IActionResult GetSession()
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (username == null)
+                return Unauthorized(new { message = "Belum login." });
+
+            return Ok(new { message = "Session aktif", username });
+        }
+    }
+}
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\DailyCheckInApiController.cs
+
+
+using App_Administration_RND.Data;
+using App_Administration_RND.DTOs;
+using App_Administration_RND.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+namespace App_Administration_RND.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class DailyCheckInApiController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+
+        public DailyCheckInApiController(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        // =========================
+        // GET SEMUA DATA
+        // =========================
+        [HttpGet]
+        public async Task<ActionResult<object>> GetDailyCheckins()
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            var data = await _context.STGM_ADM_DailyCheckins
+                .Include(x => x.Details)
+                .Where(x => x.CreateBy == username)
+                .ToListAsync();
+
+            return Ok(new
+            {
+                message = "Berhasil menampilkan data Daily Checkin.",
+                data
+            });
+        }
+
+        // =========================
+        // POST HEADER (Tambah DailyCheckin)
+        // =========================
+        [HttpPost("header")]
+        public async Task<ActionResult<object>> AddDailyCheckinHeader([FromBody] DailyCheckinHeaderDTO request)
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            if (request == null)
+                return BadRequest(new { message = "Data tidak boleh kosong." });
+
+            // Validasi status
+            var validStatuses = new[] { "Completed", "Not Completed" };
+            if (!validStatuses.Contains(request.Status))
+                request.Status = "Not Completed";
+
+            var checkin = new DailyCheckin
+            {
+                Location = request.Location,
+                Trial_Code = request.Trial_Code,
+                Status = request.Status,
+                CreateDate = request.Date,
+                CreateBy = username,
+                Device_Name = request.Device_Name,
+                Longitude = request.Longitude,
+                Latitude = request.Latitude,
+                ETL_Status = false
+            };
+
+            _context.STGM_ADM_DailyCheckins.Add(checkin);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Header Daily Checkin berhasil ditambahkan.",
+                data = checkin
+            });
+        }
+
+        // =========================
+        // POST DETAIL (Tambah Data Pekerja)
+        // =========================
+        [HttpPost("detail")]
+        public async Task<ActionResult<object>> AddDailyCheckinDetail([FromBody] List<DailyCheckinDetailDTO> details)
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            if (details == null || details.Count == 0)
+                return BadRequest(new { message = "Data detail pekerja tidak boleh kosong." });
+
+            int headerId = details.First().DailyCheckinId;
+
+            var header = await _context.STGM_ADM_DailyCheckins.FindAsync(headerId);
+            if (header == null)
+                return NotFound(new { message = $"DailyCheckin dengan ID {headerId} tidak ditemukan." });
+
+            var detailEntities = details.Select(d => new DailyCheckinDetail
+            {
+                DailyCheckinId = d.DailyCheckinId,
+                Id_Fingerprint = d.Id_Fingerprint, // ✅ update mapping lama ke baru
+                Worker_Name = d.Work_Name,  // ✅ update kolom baru
+                Work_Code = d.Work_Code,
+                Work_Name = d.Work_Name,
+                UOM = d.UOM,
+                Work_Result = d.Work_Result    // ✅ kolom baru
+            }).ToList();
+
+            await _context.STGM_ADM_DailyCheckinDetails.AddRangeAsync(detailEntities);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Detail pekerja berhasil ditambahkan.",
+                data = detailEntities
+            });
+        }
+
+        // =========================
+        // GET DETAIL PER ID
+        // =========================
+        [HttpGet("{id}")]
+        public async Task<ActionResult<object>> GetDailyCheckinById(int id)
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            var checkin = await _context.STGM_ADM_DailyCheckins
+                .Include(x => x.Details)
+                .FirstOrDefaultAsync(x => x.Id == id && x.CreateBy == username);
+
+            if (checkin == null)
+                return NotFound(new { message = $"Data DailyCheckin dengan ID {id} tidak ditemukan." });
+
+            return Ok(new
+            {
+                message = "Berhasil menampilkan detail DailyCheckin.",
+                data = checkin
+            });
+        }
+
+        // =========================
+        // DELETE Header + Details
+        // =========================
+        [HttpDelete("{id}")]
+        public async Task<ActionResult<object>> DeleteDailyCheckin(int id)
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            var checkin = await _context.STGM_ADM_DailyCheckins
+                .Include(x => x.Details)
+                .FirstOrDefaultAsync(x => x.Id == id && x.CreateBy == username);
+
+            if (checkin == null)
+                return NotFound(new { message = $"Data DailyCheckin dengan ID {id} tidak ditemukan." });
+
+            _context.STGM_ADM_DailyCheckinDetails.RemoveRange(checkin.Details);
+            _context.STGM_ADM_DailyCheckins.Remove(checkin);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "DailyCheckin dan seluruh details berhasil dihapus." });
+        }
+
+        // =========================
+        // DELETE Detail saja
+        // =========================
+        [HttpDelete("detail/{detailId}")]
+        public async Task<ActionResult<object>> DeleteDailyCheckinDetail(int detailId)
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            var detail = await _context.STGM_ADM_DailyCheckinDetails.FindAsync(detailId);
+            if (detail == null)
+                return NotFound(new { message = $"Detail dengan ID {detailId} tidak ditemukan." });
+
+            _context.STGM_ADM_DailyCheckinDetails.Remove(detail);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Detail berhasil dihapus." });
+        }
+
+        // =========================
+        // PATCH Ubah Status ke Completed
+        // =========================
+        [HttpPatch("complete/{id}")]
+        public async Task<ActionResult<object>> MarkCheckinCompleted(int id)
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            var checkin = await _context.STGM_ADM_DailyCheckins
+                .FirstOrDefaultAsync(x => x.Id == id && x.CreateBy == username);
+
+            if (checkin == null)
+                return NotFound(new { message = $"DailyCheckin dengan ID {id} tidak ditemukan." });
+
+            checkin.Status = "Completed";
+            _context.STGM_ADM_DailyCheckins.Update(checkin);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Status DailyCheckin berhasil diubah menjadi Completed.",
+                data = checkin
+            });
+        }
+
+        // =========================
+        // POST SYNC DATA (Upload dari Android)
+        // =========================
+        [HttpPost("sync")]
+        public async Task<ActionResult<object>> SyncDailyCheckins([FromBody] List<DailyCheckin> checkins)
+        {
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized(new { message = "Session tidak ditemukan. Silakan login dulu." });
+
+            if (checkins == null || !checkins.Any())
+                return BadRequest(new { message = "Data sync tidak boleh kosong." });
+
+            int uploaded = 0;
+
+            foreach (var header in checkins)
+            {
+                var existing = await _context.STGM_ADM_DailyCheckins
+                    .FirstOrDefaultAsync(x =>
+                        x.Trial_Code == header.Trial_Code &&
+                        x.CreateDate == header.CreateDate &&
+                        x.CreateBy == username);
+
+                if (existing == null)
+                {
+                    header.Id = 0;
+                    header.CreateBy = username;
+
+                    if (header.Details != null)
+                    {
+                        foreach (var detail in header.Details)
+                        {
+                            detail.Id = 0;
+                        }
+                    }
+
+                    _context.STGM_ADM_DailyCheckins.Add(header);
+                    uploaded++;
+                }
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = $"Berhasil sync {uploaded} data DailyCheckin ke server.",
+                uploadedCount = uploaded
+            });
+        }
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\DataSyncController.cs
+
+
+using App_Administration_RND.Data;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace App_Administration_RND.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class DataSyncController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+
+        public DataSyncController(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        /// <summary>
+        /// API untuk mengambil semua data dari database (kecuali STGM_Daily_Checkin)
+        /// Hanya bisa diakses jika user sudah login (session aktif)
+        /// </summary>
+        [HttpGet("all")]
+        public async Task<IActionResult> GetAllData()
+        {
+            // ✅ Cek apakah session login ada
+            var username = HttpContext.Session.GetString("Username");
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized(new { message = "Akses ditolak. Anda belum login." });
+            }
+
+            // ✅ (Opsional) Ambil user dari database berdasarkan session
+            var currentUser = await _context.STGM_ADM_Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Username == username);
+
+            if (currentUser == null)
+            {
+                // Jika session kadaluarsa atau user dihapus
+                HttpContext.Session.Clear();
+                return Unauthorized(new { message = "Session tidak valid. Silakan login ulang." });
+            }
+
+            // ✅ Ambil data dari tabel-tabel
+            var result = new Dictionary<string, object>
+            {
+                ["Users"] = await _context.STGM_ADM_Users
+                    .AsNoTracking()
+                    .ToListAsync(),
+
+                ["Locations"] = await _context.STGM_ADM_Locations
+                    .AsNoTracking()
+                    .ToListAsync(),
+
+                ["Trials"] = await _context.STGM_ADM_Trials
+                    .Where(t => t.Status == "Active")
+                    .AsNoTracking()
+                    .ToListAsync(),
+
+                ["WorkCodes"] = await _context.STGM_ADM_Work_Codes
+                    .AsNoTracking()
+                    .ToListAsync(),
+
+                ["Workers"] = await _context.STGM_ADM_Workers
+                    .AsNoTracking()
+                    .ToListAsync()
+            };
+
+            // ✅ Bisa tambahkan tabel lain di sini jika diperlukan
+            // result["Departments"] = await _context.Departments.AsNoTracking().ToListAsync();
+            // result["Activities"] = await _context.Activities.AsNoTracking().ToListAsync();
+
+            return Ok(new
+            {
+                message = "Sinkronisasi data berhasil.",
+                user = currentUser.Username,
+                data = result
+            });
+        }
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\LocationApiController.cs
+using App_Administration_RND.Data;
+using App_Administration_RND.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace App_Administration_RND.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]  // Penting agar muncul di Swagger
+    public class LocationApiController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+
+        public LocationApiController(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        // GET: api/LocationApi
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<Location>>> GetLocations()
+        {
+            var locations = await _context.STGM_ADM_Locations.ToListAsync();
+            return Ok(locations);
+        }
+
+        // GET: api/LocationApi/5
+        [HttpGet("{id}")]
+        public async Task<ActionResult<Location>> GetLocation(int id)
+        {
+            var location = await _context.STGM_ADM_Locations.FindAsync(id);
+            if (location == null)
+                return NotFound();
+
+            return Ok(location);
+        }
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\TestController.cs
+using Microsoft.AspNetCore.Mvc;
+
+namespace App_Administration_RND.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class TestController : ControllerBase
+    {
+     
+        [HttpGet("status")]
+        public IActionResult GetStatus()
+        {
+            return Ok(new
+            {
+                success = true,
+                message = "API berhasil diakses."
+            });
+        }
+    }
+}
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\TrialApiController.cs
+using App_Administration_RND.Data;
+using App_Administration_RND.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using System.Linq;
+using App_Administration_RND.DTOs;
+
+namespace App_Administration_RND.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class TrialApiController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+
+        public TrialApiController(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        // GET: api/TrialApi
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<Trial>>> GetTrials()
+        {
+            var trials = await _context.STGM_ADM_Trials.ToListAsync();
+            return Ok(trials);
+        }
+
+        // GET: api/TrialApi/5
+        [HttpGet("{trialCode}")]
+        public async Task<ActionResult<Trial>> GetTrial(string trialCode)
+        {
+            var trial = await _context.STGM_ADM_Trials.FindAsync(trialCode);
+            if (trial == null)
+                return NotFound();
+
+            return Ok(trial);
+        }
+
+        [HttpGet("active")]
+        public async Task<ActionResult<IEnumerable<TrialDTO>>> GetActiveTrials()
+        {
+            var activeTrials = await _context.STGM_ADM_Trials
+                .Where(t => t.Status == "Active")
+                .Select(t => new TrialDTO
+                {
+                    Trial_Code = t.Trial_Code,
+                    Title = t.Title,
+                    Location = t.Location,
+                    Researcher = t.Researcher,
+                    Status = t.Status
+                })
+                .ToListAsync();
+
+            return Ok(activeTrials);
+        }
+
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\WorkCodeApiController.cs
+using App_Administration_RND.Data;
+using App_Administration_RND.DTOs;
+using App_Administration_RND.Models;
+using Microsoft.AspNetCore.Mvc;
+using System;
+
+namespace App_Administration_RND.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class WorkCodeApiController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+        public WorkCodeApiController(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        // GET: api/WorkCodeApi
+        [HttpGet]
+        public IActionResult GetWorkCodes()
+        {
+            var workCodes = _context.STGM_ADM_Work_Codes
+                .Select(w => new WorkCodeDTO
+                {
+                    Id = w.Id,
+                    Work_Code = w.Work_Code,
+                    Work_Name = w.Work_Name,
+                    UOM = w.UOM
+                }).ToList();
+
+            return Ok(workCodes);
+        }
+
+        // POST: api/WorkCodeApi
+        [HttpPost]
+        public IActionResult AddWorkCode([FromBody] WorkCodeDTO workCodeDto)
+        {
+            var workCode = new STGM_Work_Code
+            {
+                Work_Code = workCodeDto.Work_Code,
+                Work_Name = workCodeDto.Work_Name,
+                UOM = workCodeDto.UOM
+            };
+
+            _context.STGM_ADM_Work_Codes.Add(workCode);
+            _context.SaveChanges();
+
+            return Ok(workCode);
+        }
+        [HttpPost("bulk")]
+        public IActionResult AddWorkCodes([FromBody] List<WorkCodeDTO> workCodesDto)
+        {
+            if (workCodesDto == null || !workCodesDto.Any())
+                return BadRequest(new { status = false, message = "No WorkCodes provided" });
+
+            var workCodes = workCodesDto.Select(w => new STGM_Work_Code
+            {
+                Work_Code = w.Work_Code,
+                Work_Name = w.Work_Name,
+                UOM = w.UOM
+            }).ToList();
+
+            _context.STGM_ADM_Work_Codes.AddRange(workCodes);
+            _context.SaveChanges();
+
+            return Ok(new
+            {
+                status = true,
+                message = "Berhasil menambahkan WorkCodes",
+                data = workCodes
+            });
+        }
+
+
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Controllers\WorkerApiController.cs
+using App_Administration_RND.Data;
+using App_Administration_RND.DTOs;
+using App_Administration_RND.Models;
+using Microsoft.AspNetCore.Mvc;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace App_Administration_RND.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class WorkerApiController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+
+        public WorkerApiController(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        // ============================
+        // GET: api/WorkerApi
+        // ============================
+        [HttpGet]
+        public IActionResult GetWorkers()
+        {
+            var workers = _context.STGM_ADM_Workers
+                .Select(w => new WorkerDTO
+                {
+                    Id_Fingerprint = w.Id_Fingerprint,
+                    Worker_Name = w.Worker_Name,
+                    Create_Date = w.Create_Date,
+                    Create_By = w.Create_By,
+                    Device_Name = w.Device_Name,
+                    ETL_Status = w.ETL_Status
+                })
+                .ToList();
+
+            return Ok(new
+            {
+                message = "Berhasil menampilkan daftar pekerja.",
+                data = workers
+            });
+        }
+
+        // ============================
+        // POST: api/WorkerApi
+        // ============================
+        [HttpPost]
+        public IActionResult AddWorker([FromBody] WorkerDTO workerDto)
+        {
+            if (workerDto == null)
+                return BadRequest(new { message = "Data pekerja tidak boleh kosong." });
+
+            var worker = new STGM_Worker
+            {
+                Worker_Name = workerDto.Worker_Name,
+                Create_By = string.IsNullOrEmpty(workerDto.Create_By) ? "system" : workerDto.Create_By,
+                Device_Name = workerDto.Device_Name ?? "Unknown",
+                ETL_Status = false
+            };
+
+            _context.STGM_ADM_Workers.Add(worker);
+            _context.SaveChanges();
+
+            return Ok(new
+            {
+                message = "Pekerja berhasil ditambahkan.",
+                data = worker
+            });
+        }
+
+        // ============================
+        // POST: api/WorkerApi/bulk
+        // ============================
+        [HttpPost("bulk")]
+        public IActionResult AddWorkers([FromBody] List<WorkerDTO> workersDto)
+        {
+            if (workersDto == null || !workersDto.Any())
+                return BadRequest(new { status = false, message = "Data pekerja tidak boleh kosong." });
+
+            var workers = workersDto.Select(w => new STGM_Worker
+            {
+                Worker_Name = w.Worker_Name,
+                Create_By = string.IsNullOrEmpty(w.Create_By) ? "system" : w.Create_By,
+                Device_Name = w.Device_Name ?? "Unknown",
+                ETL_Status = false
+            }).ToList();
+
+            _context.STGM_ADM_Workers.AddRange(workers);
+            _context.SaveChanges();
+
+            return Ok(new
+            {
+                status = true,
+                message = $"Berhasil menambahkan {workers.Count} pekerja.",
+                data = workers
+            });
+        }
+    }
+}
+
+
+2. Data :
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Data\ApplicationDbContext.cs
+
+//using App_Administration_RND.Models;
+//using Microsoft.EntityFrameworkCore;
+//using System.Collections.Generic;
+//using System.Reflection.Emit;
+
+//namespace App_Administration_RND.Data
+//{
+//    public class ApplicationDbContext : DbContext
+//    {
+//        public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+//            : base(options)
+//        {
+//        }
+
+//        public DbSet<ApplicationUser> Users { get; set; }
+//        public DbSet<Location> Locations { get; set; }
+//        public DbSet<Trial> Trials { get; set; }
+
+//        public DbSet<DailyCheckin> DailyCheckins { get; set; }
+//        public DbSet<DailyCheckinDetail> DailyCheckinDetails { get; set; }
+
+//        public DbSet<STGM_Worker> STGM_Workers { get; set; }
+//        public DbSet<STGM_Work_Code> STGM_Work_Code { get; set; }
+
+
+//        protected override void OnModelCreating(ModelBuilder modelBuilder)
+//        {
+//            base.OnModelCreating(modelBuilder);
+
+//            modelBuilder.Entity<DailyCheckin>()
+//                .HasMany(d => d.Details)
+//                .WithOne(dd => dd.DailyCheckin)
+//                .HasForeignKey(dd => dd.DailyCheckinId)
+//                .OnDelete(DeleteBehavior.Cascade);
+//        }
+
+//    }
+//}
+
+using App_Administration_RND.Models;
+using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+
+namespace App_Administration_RND.Data
+{
+    public class ApplicationDbContext : DbContext
+    {
+        public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+            : base(options)
+        {
+        }
+
+        // USER
+        public DbSet<ApplicationUser> STGM_ADM_Users { get; set; }
+
+        // LOCATION & TRIAL
+        public DbSet<Location> STGM_ADM_Locations { get; set; }
+        public DbSet<Trial> STGM_ADM_Trials { get; set; }
+
+        // DAILY CHECKIN
+        public DbSet<DailyCheckin> STGM_ADM_DailyCheckins { get; set; }
+        public DbSet<DailyCheckinDetail> STGM_ADM_DailyCheckinDetails { get; set; }
+
+        // WORKER & WORK CODE
+        public DbSet<STGM_Worker> STGM_ADM_Workers { get; set; }
+        public DbSet<STGM_Work_Code> STGM_ADM_Work_Codes { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // Relasi antara DailyCheckin dan Detail
+            modelBuilder.Entity<DailyCheckin>()
+                .ToTable("STGM_ADM_Daily_Checkin") // pastikan sesuai nama tabel di DB
+                .HasMany(d => d.Details)
+                .WithOne(dd => dd.DailyCheckin)
+                .HasForeignKey(dd => dd.DailyCheckinId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<DailyCheckinDetail>()
+                .ToTable("STGM_ADM_Daily_Checkin_Detail");
+
+            modelBuilder.Entity<Location>()
+                .ToTable("STGM_ADM_Location");
+
+            modelBuilder.Entity<Trial>()
+                .ToTable("STGM_ADM_Trial");
+
+            modelBuilder.Entity<STGM_Worker>()
+                .ToTable("STGM_ADM_Worker");
+
+            modelBuilder.Entity<STGM_Work_Code>()
+                .ToTable("STGM_ADM_Work_Code");
+
+            modelBuilder.Entity<ApplicationUser>()
+                .ToTable("STGM_ADM_User_Mobile");
+        }
+    }
+}
+
+
+3. DTOs : 
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\DTOs\Auth.cs
+namespace App_Administration_RND.DTOs
+{
+    public class AuthRequest
+    {
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+    }
+
+    public class AuthResponse
+    {
+        public string Message { get; set; } = string.Empty;
+        public string? Username { get; set; }
+        public string? Name { get; set; }
+        public int? LevelId { get; set; }
+        public bool Success { get; set; }
+    }
+}
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\DTOs\DailyCheckin.cs
+using System;
+using System.Collections.Generic;
+
+namespace App_Administration_RND.DTOs
+{
+    public class DailyCheckinHeaderDTO
+    {
+        public DateTime Date { get; set; }
+        public string Location { get; set; } = string.Empty;
+        public string Trial_Code { get; set; } = string.Empty;
+        public string Status { get; set; } = "Not Completed";
+        public string Device_Name { get; set; } = string.Empty;
+        public string Longitude { get; set; } = string.Empty;
+        public string Latitude { get; set; } = string.Empty;
+    }
+
+    public class DailyCheckinDetailDTO
+    {
+        public int DailyCheckinId { get; set; }
+        public int Id_Fingerprint { get; set; }
+        public string Worker_Name { get; set; }
+        public double Work_Result { get; set; }
+        public string Work_Code { get; set; } = string.Empty;
+        public string Work_Name { get; set; } = string.Empty;
+        public string UOM { get; set; } = string.Empty;
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\DTOs\DailyCheckin.cs
+namespace App_Administration_RND.DTOs
+{
+    public class LocationDTO
+    {
+        public int Id { get; set; }
+        public string Location_Name { get; set; } = string.Empty;
+    }
+}
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\DTOs\Trial.cs
+namespace App_Administration_RND.DTOs
+{
+    public class TrialDTO
+    {
+        public string Trial_Code { get; set; } = string.Empty;
+        public string? Title { get; set; }
+        public string? Location { get; set; }
+        public string? Researcher { get; set; }
+        public string? Status { get; set; }
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\DTOs\WorkCode.cs
+namespace App_Administration_RND.DTOs
+{
+    public class WorkCodeDTO
+    {
+        public int Id { get; set; }
+        public string Work_Code { get; set; }
+        public string Work_Name { get; set; }
+        public string UOM { get; set; }
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\DTOs\Worker.cs
+namespace App_Administration_RND.DTOs
+{
+    public class WorkerDTO
+    {
+        public int Id_Fingerprint { get; set; }
+        public string Worker_Name { get; set; }
+        public DateTime Create_Date { get; set; }
+        public string Create_By { get; set; }
+        public string Device_Name { get; set; }
+        public bool ETL_Status { get; set; }
+    }
+}
+
+
+
+4. Models : 
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Models\ApplicationUser.cs
+
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+[Table("STGM_ADM_USER_MOBILE")]
+public class ApplicationUser
+{
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.None)]
+    [Column("USER_ID")]
+    public int UserId { get; set; }
+
+
+    [Column("NAME", TypeName = "varchar(255)")]
+    public string? Name { get; set; }
+
+    [Column("USERNAME", TypeName = "varchar(255)")]
+    public string? Username { get; set; }
+
+    [Column("PASSWORD", TypeName = "varchar(255)")]
+    public string? PasswordHash { get; set; }
+
+    [Column("LEVEL_ID")]
+    public int LevelId { get; set; }
+
+    [Column("ANDROID_ACCESS")]
+    public int AndroidAccess { get; set; }
+
+    [Column("ANDROID_ISLOCKED")]
+    public int AndroidIsLocked { get; set; }
+
+    [Column("MAN_ID", TypeName = "varchar(255)")]
+    public string? ManId { get; set; }
+
+    [Column("EMAIL", TypeName = "varchar(255)")]
+    public string? Email { get; set; }
+
+    [Column("ETL_STATUS", TypeName = "varchar(1)")]
+    public string? EtlStatus { get; set; }
+}
+
+
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Models\DailyCheckin.cs
+
+
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace App_Administration_RND.Models
+{
+    [Table("STGM_ADM_Daily_Checkin")]
+    public class DailyCheckin
+    {
+        public int Id { get; set; }
+        public string Location { get; set; } = string.Empty;
+        public string Trial_Code { get; set; } = string.Empty;
+        public string Status { get; set; } = "Not Completed";
+        public DateTime CreateDate { get; set; } = DateTime.Now;
+        public string CreateBy { get; set; } = string.Empty;
+        public string Device_Name { get; set; } = string.Empty;
+        public string Longitude { get; set; } = string.Empty;
+        public string Latitude { get; set; } = string.Empty;
+        public bool ETL_Status { get; set; } = false;
+
+        // Relasi One-to-Many ke Detail
+        public List<DailyCheckinDetail> Details { get; set; } = new();
+    }
+}
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Models\DailyCheckinDetail.cs
+
+
+using System.Text.Json.Serialization;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace App_Administration_RND.Models
+{
+    [Table("STGM_ADM_Daily_Checkin_Detail")]
+    public class DailyCheckinDetail
+    {
+        public int Id { get; set; }
+        public int DailyCheckinId { get; set; }
+
+        // ✅ Perubahan nama kolom
+        public int Id_Fingerprint { get; set; }
+        public string Worker_Name { get; set; } = string.Empty;
+        public string Work_Code { get; set; } = string.Empty;
+        public string Work_Name { get; set; } = string.Empty;
+        public string UOM { get; set; } = string.Empty;
+        public double Work_Result { get; set; }
+
+        [JsonIgnore]
+        public DailyCheckin? DailyCheckin { get; set; }
+    }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Models\Location.cs
+
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+[Table("STGM_ADM_Location")]
+public class Location
+{
+    [Key]
+    public int Id { get; set; }
+
+    [Required]
+    [MaxLength(35)]
+    public string Location_Name { get; set; } = string.Empty;
+
+    [MaxLength(3)]
+    public string? Man_Id { get; set; }
+
+    public string? Created_By { get; set; }
+    public DateTime Created_Date { get; set; } = DateTime.Now;
+    public string? Modified_By { get; set; }
+    public DateTime? Modified_Date { get; set; }
+}
+
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Models\Trial.cs
+
+    using System;
+    using System.ComponentModel.DataAnnotations;
+    using System.ComponentModel.DataAnnotations.Schema;
+
+    namespace App_Administration_RND.Models
+    {
+        [Table("STGM_ADM_Trial")]
+        public class Trial
+        {
+            [Key]
+            [MaxLength(12)]
+            public string Trial_Code { get; set; } = string.Empty;
+
+            [MaxLength(7)]
+            public string? Program { get; set; }
+
+            [MaxLength(15)]
+            public string? Location { get; set; }
+
+            [MaxLength(250)]
+            public string? Title { get; set; }
+
+            [MaxLength(100)]
+            public string? Sector { get; set; }
+
+            [MaxLength(20)]
+            public string? Main_Comp { get; set; }
+
+            [MaxLength(100)]
+            public string? Rnd_Comp { get; set; }
+
+            [MaxLength(15)]
+            public string? Usage_Comp { get; set; }
+
+            [MaxLength(200)]
+            public string? Theme { get; set; }
+
+            [MaxLength(200)]
+            public string? Layout_Name { get; set; }
+
+            [MaxLength(150)]
+            public string? Layout_Location { get; set; }
+
+            [MaxLength(200)]
+            public string? Plan_Name { get; set; }
+
+            [MaxLength(150)]
+            public string? Plan_Location { get; set; }
+
+            [MaxLength(200)]
+            public string? Summary_Name { get; set; }
+
+            [MaxLength(150)]
+            public string? Summary_Location { get; set; }
+
+            [MaxLength(200)]
+            public string? Photo_Name { get; set; }
+
+            [MaxLength(150)]
+            public string? Photo_Location { get; set; }
+
+            [MaxLength(8)]
+            public string? Site { get; set; }
+
+            [MaxLength(8)]
+            public string? Smu { get; set; }
+
+            [MaxLength(20)]
+            public string? Elevation { get; set; }
+
+            [MaxLength(20)]
+            public string? Soil_Family { get; set; }
+
+            [MaxLength(20)]
+            public string? Rotation { get; set; }
+
+            public DateTime? Establish_Date { get; set; }
+            public DateTime? Planting_Date { get; set; }
+            public DateTime? Last_Update { get; set; }
+
+            [MaxLength(20)]
+            public string? Duration { get; set; }
+
+            public double? Area { get; set; }
+
+            [MaxLength(100)]
+            public string? Researcher { get; set; }
+
+            [MaxLength(100)]
+            public string? Inspector { get; set; }
+
+            [MaxLength(100)]
+            public string? Program_Leader { get; set; }
+
+            [MaxLength(100)]
+            public string? Design { get; set; }
+
+            [MaxLength(100)]
+            public string? Longitude { get; set; }
+
+            [MaxLength(100)]
+            public string? Latitude { get; set; }
+
+            public double? Altitude { get; set; }
+            public double? Iri { get; set; }
+            public double? Bri { get; set; }
+            public int? Batch { get; set; }
+
+            [MaxLength(1000)]
+            public string? Objectives { get; set; }
+
+            [MaxLength(1000)]
+            public string? Material_Method { get; set; }
+
+            [MaxLength(15)]
+            public string? Status { get; set; }
+
+            public DateTime? End_Date { get; set; }
+            public int? Harvest_Year { get; set; }
+
+            [MaxLength(200)]
+            public string? Cultivation { get; set; }
+
+            [MaxLength(1000)]
+            public string? Remark { get; set; }
+
+            [MaxLength(35)]
+            public string? Prev_Code { get; set; }
+
+            [MaxLength(1000)]
+            public string? Memo { get; set; }
+
+            [MaxLength(3)]
+            public string? Man_Id { get; set; }
+
+            public string? Created_By { get; set; }
+            public DateTime Created_Date { get; set; } = DateTime.Now;
+            public string? Modified_By { get; set; }
+            public DateTime? Modified_Date { get; set; }
+
+            public int? Rkt_Year { get; set; }
+
+            [MaxLength(255)]
+            public string? Rkt_Note { get; set; }
+        }
+    }
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Models\WorkCode.cs
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace App_Administration_RND.Models
+{
+    [Table("STGM_Work_Code")] 
+    public class STGM_Work_Code
+    {
+        [Key]
+        public int Id { get; set; }
+
+        [MaxLength(1000)]
+        public string Work_Code { get; set; }
+
+        public string Work_Name { get; set; }
+
+        [MaxLength(1000)]
+        public string UOM { get; set; }
+        public DateTime Create_Date { get; set; } = DateTime.Now;
+        public string Create_By { get; set; } = string.Empty;
+        public string Device_Name { get; set; } = string.Empty;
+        public bool ETL_Status { get; set; } = false;
+
+    }
+}
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Models\Worker.cs
+
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace App_Administration_RND.Models
+{
+    [Table("STGM_ADM_Worker")] // ✅ Menentukan nama tabel di database
+    public class STGM_Worker
+    {
+        [Key]
+        public int Id_Fingerprint { get; set; }  // ✅ Primary Key
+
+        [MaxLength(1000)]
+        public string Worker_Name { get; set; }
+
+        public DateTime Create_Date { get; set; } = DateTime.Now;
+
+        public string Create_By { get; set; } = string.Empty;
+
+        public string Device_Name { get; set; } = string.Empty;
+
+        public bool ETL_Status { get; set; } = false;
+    }
+}
+
+
+
+5. Services :
+
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\Services\PasswordService.cs
+using BCrypt.Net;
+using Microsoft.CodeAnalysis.Scripting;
+
+namespace App_Administration_RND.Services
+{
+    public class PasswordService
+    {
+        // Membuat hash password baru (jika dibutuhkan)
+        public string HashPassword(string password)
+        {
+            // Gunakan bcrypt untuk kompatibilitas dengan Laravel
+            return BCrypt.Net.BCrypt.HashPassword(password);
+        }
+
+        // Verifikasi password input terhadap hash dari database
+        public bool VerifyPassword(string hashedPassword, string providedPassword)
+        {
+            // Verifikasi bcrypt hash seperti di Laravel
+            return BCrypt.Net.BCrypt.Verify(providedPassword, hashedPassword);
+        }
+    }
+}
+
+
+
+Json : 
+C:\Users\rr609\source\repos\App_Administration_RND\App_Administration_RND\appsettings.json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=Ridho;Database=Application_App_RND5;Trusted_Connection=True;TrustServerCertificate=True;"
+  },
+  "AllowedHosts": "*",
+  "Kestrel": {
+    "Endpoints": {
+      "Http": {
+        "Url": "http://0.0.0.0:7020"
+      },
+      "Https": {
+        "Url": "https://0.0.0.0:7021"
+      }
+    }
+  }
+}
+
+
+
+Program : 
+
+using App_Administration_RND.Data;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ========== KONFIGURASI SERVER URLS ==========
+// PENTING: Server akan listen di semua network interfaces
+builder.WebHost.ConfigureKestrel(serverOptions =>
+{
+    // Listen pada semua IP addresses di port 7021
+    serverOptions.ListenAnyIP(7021, listenOptions =>
+    {
+        listenOptions.UseHttps(); // Gunakan HTTPS
+    });
+
+    // Optional: Listen HTTP juga di port 7020 untuk fallback
+    serverOptions.ListenAnyIP(7020);
+});
+
+// Atau gunakan cara sederhana (pilih salah satu):
+// builder.WebHost.UseUrls("https://0.0.0.0:7021", "http://0.0.0.0:7020");
+
+// ========== DATABASE CONTEXT ==========
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// ========== SESSION ==========
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromHours(2);
+    options.Cookie.HttpOnly = true;
+    options.Cookie.IsEssential = true;
+});
+
+// ========== CORS (PENTING untuk Mobile App) ==========
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", builder =>
+        builder.AllowAnyOrigin()
+               .AllowAnyHeader()
+               .AllowAnyMethod());
+});
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+// ========== MIDDLEWARE ==========
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+// CORS harus di awal
+app.UseCors("AllowAll");
+
+// Untuk development, kita bisa skip HTTPS redirect jika perlu
+// app.UseHttpsRedirection();
+
+app.UseStaticFiles();
+
+// Session harus sebelum Authorization
+app.UseSession();
+
+app.UseAuthorization();
+
+// Redirect ke login.html jika akses root
+app.MapGet("/", context =>
+{
+    context.Response.Redirect("/login.html");
+    return Task.CompletedTask;
+});
+
+app.MapControllers();
+
+// Log URL yang digunakan
+var urls = app.Urls;
+Console.WriteLine("========================================");
+Console.WriteLine("Server berjalan di:");
+foreach (var url in urls)
+{
+    Console.WriteLine($"  - {url}");
+}
+Console.WriteLine("========================================");
+
+app.Run();
